@@ -234,6 +234,22 @@
         .mem-foot button { font-size: 12.5px; color: var(--danger); padding: 4px 8px; border-radius: 8px; }
         .mem-foot button:hover { background: var(--surface-2); }
 
+
+        /* ---------- Exécution du code ---------- */
+        .run { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 13.5px; background: var(--surface); }
+        .run.pass { border-color: var(--ok); }
+        .run.fail, .run.error, .run.timeout { border-color: var(--danger); }
+        .run-head { display: flex; align-items: center; gap: 8px; font-weight: 600; flex-wrap: wrap; }
+        .run.pass .run-head { color: var(--ok); }
+        .run.fail .run-head, .run.error .run-head, .run.timeout .run-head { color: var(--danger); }
+        .run-note { color: var(--muted); font-weight: 400; font-size: 12.5px; }
+        .run ul { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+        .run li { display: flex; gap: 8px; align-items: baseline; line-height: 1.4; overflow-wrap: anywhere; }
+        .run li .ok { color: var(--ok); } .run li .ko { color: var(--danger); }
+        .run li small { color: var(--muted); display: block; }
+        .run button { margin-top: 10px; background: var(--accent); color: var(--accent-ink); border-radius: 9px; padding: 6px 12px; font-weight: 600; font-size: 13px; }
+        .auto-note { align-self: flex-end; font-size: 12.5px; color: var(--muted); background: var(--surface); border: 1px dashed var(--line); border-radius: 999px; padding: 5px 12px; margin: 2px 0; }
+
         @media (min-width: 768px) {
             .sidebar { transform: none; }
             .overlay, #close-sidebar-btn, #open-sidebar-btn { display: none !important; }
@@ -327,6 +343,7 @@
         </div>
     </div>
 
+    <script src="coderunner.js"></script>
     <script>
         // ---------- Markdown & coloration du code ----------
         const renderer = new marked.Renderer();
@@ -375,7 +392,9 @@
             const stored = JSON.parse(localStorage.getItem('octopus_chats'));
             if (Array.isArray(stored)) chats = stored;
         } catch (e) { chats = []; }
+        chats.forEach(c => (c.messages || []).forEach(m => { if (m.run && m.run.status === 'running') delete m.run; }));
         let currentChatId = null;
+        let pendingAuto = null;
         let isWebSearchActive = false;
         let selectedFileData = null;
 
@@ -677,7 +696,9 @@
             const b = [];
             if (msg.recalled) b.push(`<span class="badge" title="Souvenirs utilisés pour cette réponse"><i class="fa-solid fa-brain"></i> ${msg.recalled} souvenir${msg.recalled > 1 ? 's' : ''}</span>`);
             const m = msg.meta;
-            if (m && m.checked) {
+            if (m && m.council > 1) {
+                b.push(`<span class="badge good" title="Plusieurs modèles ont répondu ; Octopus a comparé leurs avis et tranché les désaccords"><i class="fa-solid fa-users"></i> Conseil de ${m.council} modèles</span>`);
+            } else if (m && m.checked) {
                 const pct = m.confidence != null ? ` · confiance ${Math.round(m.confidence * 100)}%` : '';
                 if (m.revised) b.push(`<span class="badge fix" title="Un défaut a été trouvé à la relecture et corrigé avant l'envoi"><i class="fa-solid fa-wand-magic-sparkles"></i> Corrigée après relecture${pct}</span>`);
                 else if (m.confidence != null && m.confidence >= 0.7) b.push(`<span class="badge good" title="Réponse relue par un second passage"><i class="fa-solid fa-circle-check"></i> Relue${pct}</span>`);
@@ -720,7 +741,28 @@
                     fileHtml = `<div class="file-chip"><i class="fa-solid fa-file-lines"></i><span>${escapeHtml(msg.file.name)}</span></div>`;
                 }
             }
+            if (msg.auto) return `<div class="msg user"><div class="auto-note"><i class="fa-solid fa-rotate"></i> Auto-correction ${msg.auto.attempt} : les tests ont échoué, Octopus corrige…</div></div>`;
             return `<div class="msg user"><div class="bubble">${fileHtml}${escapeHtml(msg.content)}</div></div>`;
+        }
+
+        function runHtml(msg, idx) {
+            const r = msg.run;
+            if (!r) return '';
+            if (r.status === 'running') return `<div class="run"><div class="run-head"><i class="fa-solid fa-spinner fa-spin"></i> Exécution des tests dans un bac à sable…</div></div>`;
+            const attempt = msg.autoAttempt ? ` <span class="run-note">· après ${msg.autoAttempt} correction${msg.autoAttempt > 1 ? 's' : ''}</span>` : '';
+            let head;
+            if (r.status === 'pass') head = `<i class="fa-solid fa-circle-check"></i> Code vérifié : ${r.passed}/${r.total} tests réussis${attempt}`;
+            else if (r.status === 'fail') head = `<i class="fa-solid fa-circle-xmark"></i> ${r.passed}/${r.total} tests réussis${attempt}`;
+            else if (r.status === 'timeout') head = `<i class="fa-solid fa-hourglass-end"></i> Exécution interrompue`;
+            else head = `<i class="fa-solid fa-triangle-exclamation"></i> ${r.status === 'notests' ? 'Aucun test exécuté' : 'Erreur d\'exécution'}`;
+            const list = (r.results || []).length
+                ? `<ul>${r.results.map(t => `<li><span class="${t.ok ? 'ok' : 'ko'}">${t.ok ? '✓' : '✗'}</span><span>${escapeHtml(t.name)}${t.ok ? '' : `<small>${escapeHtml(t.error)}</small>`}</span></li>`).join('')}</ul>`
+                : '';
+            const note = r.message ? `<div class="run-note" style="margin-top:6px">${escapeHtml(r.message)}</div>` : '';
+            const activeChat = chats.find(c => c.id === currentChatId);
+            const isLast = activeChat && idx === activeChat.messages.length - 1;
+            const fix = (r.status !== 'pass' && !msg.streaming && isLast) ? `<button type="button" data-run-fix="${idx}"><i class="fa-solid fa-rotate"></i> Demander la correction</button>` : '';
+            return `<div class="run ${r.status}"><div class="run-head">${head}</div>${list}${note}${fix}</div>`;
         }
 
         function botHtml(msg, idx) {
@@ -733,7 +775,7 @@
                 <div class="bot-body">
                     ${toolsHtml(msg)}${mediaHtml(msg)}
                     ${waiting ? '<div class="typing" aria-label="Octopus réfléchit"><i></i><i></i><i></i></div>' : ''}
-                    ${body}${sourcesHtml(msg)}${badgesHtml(msg)}${actions}
+                    ${body}${sourcesHtml(msg)}${runHtml(msg, idx)}${badgesHtml(msg)}${actions}
                 </div>
             </div>`;
         }
@@ -772,7 +814,9 @@
         // ---------- Envoi à l'API ----------
         chatForm.onsubmit = async (e) => {
             e.preventDefault();
-            const rawText = userInput.value.trim();
+            const auto = pendingAuto;
+            pendingAuto = null;
+            const rawText = auto ? auto.text : userInput.value.trim();
             if (!rawText && !selectedFileData) return;
 
             if (!currentChatId) createNewChat();
@@ -788,10 +832,9 @@
                 fullTextPrompt += `\n\n[CONTENU DU FICHIER "${selectedFileData.name}"]:\n${selectedFileData.text}`;
             }
 
-            activeChat.messages.push({ role: 'user', content: rawText || `[Fichier : ${selectedFileData.name}]`, file: selectedFileData });
+            activeChat.messages.push({ role: 'user', content: rawText || `[Fichier : ${selectedFileData.name}]`, file: selectedFileData, auto: auto ? { attempt: auto.attempt } : undefined });
 
-            userInput.value = '';
-            userInput.style.height = 'auto';
+            if (!auto) { userInput.value = ''; userInput.style.height = 'auto'; }
             const attachedFile = selectedFileData;
             selectedFileData = null;
             fileInput.value = '';
@@ -802,7 +845,7 @@
             renderSidebar();
 
             // Message de réponse créé tout de suite : l'indicateur de réflexion s'affiche aussitôt
-            const bot = { role: 'bot', content: '', tools: [], images: [], sources: [], audios: [], streaming: true };
+            const bot = { role: 'bot', content: '', tools: [], images: [], sources: [], audios: [], streaming: true, autoAttempt: auto ? auto.attempt : 0 };
             activeChat.messages.push(bot);
             renderMessages();
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -857,7 +900,7 @@
                             else if (ev.t === 'music') startMusic(bot, ev.prompt, refresh);
                             else if (ev.t === 'phase') bot.phase = ev.label;
                             else if (ev.t === 'recall') bot.recalled = ev.count;
-                            else if (ev.t === 'meta') bot.meta = { confidence: ev.confidence, checked: ev.checked, revised: ev.revised };
+                            else if (ev.t === 'meta') bot.meta = { confidence: ev.confidence, checked: ev.checked, revised: ev.revised, council: ev.council || 0 };
                             else if (ev.t === 'memory') { (ev.add || []).forEach(addMemory); }
                             else if (ev.t === 'error') fail(`⚠️ ${ev.message}`);
                             refresh();
@@ -889,7 +932,40 @@
             if (!bot.content && !bot.images.length && !bot.musicPending && !bot.audios.length) bot.content = '⚠️ Réponse vide, réessaie.';
             saveChats();
             renderMessages();
+            maybeRunCode(bot, activeChat);
         };
+
+        // ---------- Exécution automatique du code et auto-correction ----------
+        function canAutoSubmit(chat) {
+            return currentChatId === chat.id && !selectedFileData && !userInput.value.trim() && modeSelect.value !== 'music' && !chat.messages.some(m => m.streaming);
+        }
+        function triggerFix(result, attempt) {
+            pendingAuto = { text: CodeRunner.failureMessage(result), attempt };
+            chatForm.requestSubmit();
+        }
+        async function maybeRunCode(bot, chat) {
+            if (!window.CodeRunner || bot.run || bot.content.startsWith('⚠️')) return;
+            const blocks = CodeRunner.extractBlocks(bot.content);
+            if (!blocks) return;
+            bot.run = { status: 'running' };
+            if (currentChatId === chat.id) renderMessages();
+            let result;
+            try { result = await CodeRunner.run(blocks.solution, blocks.tests, { timeoutMs: 6000 }); }
+            catch (err) { result = { status: 'error', total: 0, passed: 0, results: [], message: String(err && err.message || err) }; }
+            bot.run = result;
+            saveChats();
+            if (currentChatId === chat.id) renderMessages();
+            const attempt = bot.autoAttempt || 0;
+            if (result.status !== 'pass' && attempt < CodeRunner.MAX_AUTO_FIX && canAutoSubmit(chat)) triggerFix(result, attempt + 1);
+        }
+        messagesContainer.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-run-fix]');
+            if (!btn) return;
+            const chat = chats.find(c => c.id === currentChatId);
+            const msg = chat && chat.messages[Number(btn.getAttribute('data-run-fix'))];
+            if (!msg || !msg.run || !canAutoSubmit(chat)) return;
+            triggerFix(msg.run, (msg.autoAttempt || 0) + 1);
+        });
 
         if (chats.length === 0) createNewChat();
         else { currentChatId = chats[0].id; renderSidebar(); renderMessages(); }
