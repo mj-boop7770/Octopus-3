@@ -2,20 +2,21 @@
 // Le cerveau d'Octopus 3.
 //
 //   Question simple  -> réponse directe en flux (rapide, comme avant)
-//   Question difficile -> RÉFLEXION : brouillon silencieux (avec outils) -> RELECTURE par un
-//                         critique interne -> livraison, ou réécriture si un vrai défaut est trouvé
+//   Question difficile -> RÉFLEXION : brouillon silencieux (avec outils), en parallèle d'un CONSEIL
+//                         d'autres modèles ; si le conseil répond : synthèse finale en flux.
+//                         Sinon RELECTURE par un critique interne -> livraison, ou réécriture
 //   Après la réponse -> MÉMOIRE : nouveaux souvenirs durables proposés au navigateur
 //
 // Événements envoyés à l'interface (via emit) :
 //   {t:'recall', count}           nombre de souvenirs utilisés
-//   {t:'phase', name, label}      think | check | revise
+//   {t:'phase', name, label}      think | council | check | revise
 //   {t:'tool', id, name, label}   un outil démarre
 //   {t:'tool_done', id, ok}       un outil est terminé
 //   {t:'sources', items}          sources web
 //   {t:'image', url, prompt}      image à afficher
 //   {t:'music', prompt}           musique à générer (l'interface appelle /api/music)
 //   {t:'delta', text}             morceau de texte de la réponse
-//   {t:'meta', confidence, checked, revised}   verdict de la relecture
+//   {t:'meta', confidence, checked, revised, council}   verdict de la relecture ; council = nombre d'avis comparés (0 si aucun)
 //   {t:'memory', add:[...]}       nouveaux souvenirs à enregistrer
 //   {t:'done', model}             fin
 //   {t:'error', message}          erreur
@@ -25,6 +26,7 @@ const { getToolSpecs, describeTool, runTool } = require('./tools.js');
 const { buildSystemPrompt } = require('./soul.js');
 const { selectRelevant, shouldExtract, extractFacts } = require('./memory.js');
 const { needsDeliberation, critique, buildRevisionNote } = require('./deliberate.js');
+const { getMembers, councilAllowed, askCouncil, buildSynthesisNote } = require('./council.js');
 
 const MAX_STEPS = 4;
 const BUDGET_MS = 50000; // Vercel : maxDuration 60 s, on garde de la marge
@@ -179,11 +181,41 @@ async function runAgent({ messages, keys, mode, webSearch, hasImage, file, memor
     if (needsDeliberation({ text: question, mode, hasImage }) && left() > 25000) {
       // ---------- Réflexion ----------
       emit({ t: 'phase', name: 'think', label: 'Je réfléchis' });
+      // Le conseil démarre en même temps que le brouillon : il ne rallonge presque pas l'attente
+      const members = councilAllowed(mode) ? getMembers(keys, ladder[0].model) : [];
+      const councilPromise = members.length
+        ? askCouncil({
+            members, messages, temperature,
+            systemPrompt: buildSystemPrompt({ mode, hasWebTool: false, memories: recalled, model: 'un modèle du conseil' })
+          }).catch(() => [])
+        : Promise.resolve([]);
       const draft = await gather({ silent: true });
       const draftText = draft.content.trim();
 
+      // ---------- Conseil : les avis des autres modèles (déjà lancés en parallèle) ----------
+      const avis = await councilPromise;
+
       if (!draftText) {
         emit({ t: 'delta', text: '(réponse vide)' });
+      } else if (avis.length && left() > 12000) {
+        emit({ t: 'phase', name: 'council', label: `Je compare ${avis.length + 1} modèles` });
+        convo.push({ role: 'assistant', content: draftText });
+        convo.push({ role: 'user', content: buildSynthesisNote(avis) });
+        const before = outChars;
+        let synth = null;
+        try {
+          synth = await gather({ silent: false, allowTools: true, maxSteps: 2 });
+        } catch (error) {
+          if (!(error instanceof ReportedError) || outChars > before) throw error;
+        }
+        if (outChars === before) {
+          flush(draftText);
+          finalText = draftText;
+          emit({ t: 'meta', confidence: null, checked: false, revised: false, council: 0 });
+        } else {
+          finalText = synth ? synth.content : '';
+          emit({ t: 'meta', confidence: null, checked: true, revised: false, council: avis.length + 1 });
+        }
       } else {
         // ---------- Relecture ----------
         let verdict = null;

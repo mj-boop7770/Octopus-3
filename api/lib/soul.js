@@ -4,7 +4,10 @@
 // Modifie-le librement : chaque phrase change la façon dont Octopus pense et parle.
 
 const MODE_HINTS = {
-  code: "MODE CODE : réponds en ingénieur senior. Code complet et exécutable dans des blocs markdown avec le langage. Explique les choix importants en peu de mots, signale les risques (sécurité, cas limites) et ne laisse jamais de « ... » à la place du code.",
+  code: [
+    "MODE CODE : réponds en ingénieur senior. Code complet et exécutable dans des blocs markdown avec le langage. Explique les choix importants en peu de mots, signale les risques (sécurité, cas limites) et ne laisse jamais de « ... » à la place du code.",
+    "TESTS EXÉCUTÉS AUTOMATIQUEMENT : pour du JavaScript autonome (fonctions, algorithmes, logique : sans DOM, sans import/export, sans require, sans réseau), donne TOUJOURS deux blocs : la solution dans un bloc ```js, puis ses tests dans un bloc ```js test, écrits avec test('nom', () => { assertEqual(f(2), 4); }). Les fonctions assert(condition, message), assertEqual(reçu, attendu) et assertThrows(fn) existent déjà ; test() accepte les fonctions async. Le navigateur de l'utilisateur exécute ces tests dans un bac à sable et te renvoie les échecs pour que tu corriges : écris des tests honnêtes (cas normaux, cas limites, entrées invalides), jamais des tests complaisants ; si on te renvoie des échecs, corrige le code, n'affaiblis pas les tests. Pour un autre langage ou du code d'interface (HTML/CSS/DOM), ne mets pas de bloc de tests."
+  ].join('\n'),
   creative: "MODE CRÉATIF : sois imaginatif, expressif et original. Évite les clichés ; prends un parti pris et assume-le.",
   concise: "MODE PRÉCIS : réponse la plus courte possible qui reste exacte et complète. Une à trois phrases quand c'est possible, aucun préambule."
 };
