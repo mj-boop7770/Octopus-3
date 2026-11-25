@@ -1,0 +1,17 @@
+{
+  "name": "octopus3",
+  "version": "3.0.0",
+  "description": "Octopus 3 : assistant IA qui réfléchit, vérifie ses réponses et se souvient (gratuit, sans base de données)",
+  "main": "api/chat.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node --test tests/*.test.js",
+    "evals": "node evals/run.js",
+    "check": "node --check server.js && node --check api/chat.js && node --check api/music.js && node --check api/lib/agent.js && node --check api/lib/tools.js && node --check api/lib/llm.js && node --check api/lib/guard.js && node --check api/lib/securityLayer.js && node --check api/lib/soul.js && node --check api/lib/memory.js && node --check api/lib/deliberate.js && node --check api/lib/calc.js && node --check api/lib/safefetch.js"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=22"
+  }
+}
